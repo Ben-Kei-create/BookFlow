@@ -1,7 +1,7 @@
 // ReaderView.swift
-// 没入型リーダービュー
+// 没入型リーダービュー — ZStack 5層構造
 // TabView(PageStyle) による横めくりUI
-// SpriteKit背景、ハプティクス、チラ見せブラーを統合
+// SpriteKit背景、ハプティクス、チラ見せブラー、ページスライダーを統合
 
 import SwiftUI
 import SpriteKit
@@ -11,14 +11,18 @@ import SpriteKit
 struct ReaderView: View {
     // MARK: - プロパティ
     @StateObject private var viewModel: ReaderViewModel
-    let onDismiss: () -> Void
+    let onDismiss: (ReadingRecord?) -> Void
 
     /// ドラッグ状態の追跡（抵抗制御用）
     @GestureState private var dragOffset: CGFloat = 0
     /// ページめくりアニメーション制御
     @State private var isPageTransitioning = false
+    /// クリフハンガーのブラー値（タップで晴れる）
+    @State private var cliffhangerBlur: CGFloat = 6
+    /// SpriteKitシーン参照（テーマ切り替え用）
+    @State private var backgroundScene: ImmersiveBackgroundScene?
 
-    init(book: Book, onDismiss: @escaping () -> Void) {
+    init(book: Book, onDismiss: @escaping (ReadingRecord?) -> Void) {
         _viewModel = StateObject(wrappedValue: ReaderViewModel(book: book))
         self.onDismiss = onDismiss
     }
@@ -36,7 +40,7 @@ struct ReaderView: View {
                 cliffhangerPreview
             }
 
-            // レイヤー4: UIオーバーレイ（メニュー、ページインジケータ）
+            // レイヤー4: UIオーバーレイ（ページインジケータ）
             overlayUI
 
             // レイヤー5: メニュー（タップで表示/非表示）
@@ -47,12 +51,20 @@ struct ReaderView: View {
         .ignoresSafeArea()
         .statusBarHidden(!viewModel.isMenuVisible)
         .onTapGesture(count: 2) {
-            // ダブルタップ：共感マーク追加（簡易実装）
+            // ダブルタップ：共感マーク追加
             viewModel.addEmpathy(at: NSRange(location: 0, length: 10))
         }
         .onTapGesture(count: 1) {
             // シングルタップ：メニュー表示切替
             viewModel.toggleMenu()
+        }
+        .onChange(of: viewModel.currentTheme) { _, newTheme in
+            // SpriteKitシーンのテーマをリアクティブに更新
+            backgroundScene?.applyTheme(newTheme)
+        }
+        .onChange(of: viewModel.currentPageIndex) { _, _ in
+            // ページが変わったらクリフハンガーのブラーをリセット
+            cliffhangerBlur = 6
         }
     }
 
@@ -61,20 +73,26 @@ struct ReaderView: View {
     /// SpriteKitシーンによる動的背景
     private var immersiveBackground: some View {
         SpriteView(
-            scene: createBackgroundScene(),
+            scene: getOrCreateBackgroundScene(),
             options: [.allowsTransparency]
         )
         .ignoresSafeArea()
         .allowsHitTesting(false)
     }
 
-    /// 現在の感情テーマに応じたSpriteKitシーンを生成
-    private func createBackgroundScene() -> SKScene {
+    /// SpriteKitシーンを取得または生成する（テーマ切り替え時に再生成しない）
+    private func getOrCreateBackgroundScene() -> SKScene {
+        if let scene = backgroundScene {
+            return scene
+        }
         let scene = ImmersiveBackgroundScene(
             size: UIScreen.main.bounds.size,
             theme: viewModel.currentTheme
         )
         scene.scaleMode = .resizeFill
+        DispatchQueue.main.async {
+            backgroundScene = scene
+        }
         return scene
     }
 
@@ -104,6 +122,7 @@ struct ReaderView: View {
     // MARK: - レイヤー3: クリフハンガー（次ページチラ見せ）
 
     /// 次ページの最初の1行をブラーして「チラ見せ」する
+    /// タップでブラーが「晴れる」アニメーション
     private var cliffhangerPreview: some View {
         VStack {
             Spacer()
@@ -112,10 +131,15 @@ struct ReaderView: View {
                 .foregroundColor(ShioriColors.inkBlack.opacity(0.3))
                 .lineSpacing(ShioriTypography.bodyLineSpacing)
                 .kerning(ShioriTypography.bodyKerning)
-                .blur(radius: 6)
+                .blur(radius: cliffhangerBlur)
                 .padding(.horizontal, 32)
                 .padding(.bottom, 60)
-                .allowsHitTesting(false)
+                .onTapGesture {
+                    // タップでブラーが晴れる演出
+                    withAnimation(.easeOut(duration: 0.6)) {
+                        cliffhangerBlur = 0
+                    }
+                }
         }
     }
 
@@ -151,14 +175,15 @@ struct ReaderView: View {
 
     // MARK: - レイヤー5: リーダーメニュー
 
-    /// タップで表示されるメニュー（章の切れ目の広告表示もここ）
+    /// タップで表示されるメニュー（ページスライダー付き）
     private var readerMenu: some View {
         VStack {
             // トップバー
             HStack {
                 Button {
-                    // 読書セッション記録を保存
-                    onDismiss()
+                    // 読書セッション記録を生成して返す
+                    let record = viewModel.createReadingRecord()
+                    onDismiss(record)
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 18, weight: .light))
@@ -195,7 +220,60 @@ struct ReaderView: View {
             )
 
             Spacer()
+
+            // ボトムバー：ページスライダー
+            VStack(spacing: 8) {
+                // ページスライダー（ミニマルデザイン）
+                Slider(
+                    value: Binding(
+                        get: { Double(viewModel.currentPageIndex) },
+                        set: { viewModel.changePage(to: Int($0)) }
+                    ),
+                    in: 0...Double(max(viewModel.book.totalPages - 1, 1)),
+                    step: 1
+                )
+                .tint(ShioriColors.dustyRose.opacity(0.6))
+                .padding(.horizontal, 24)
+
+                // 感情テーマのインジケータ
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(themeIndicatorColor)
+                        .frame(width: 6, height: 6)
+                    Text(themeLabel)
+                        .font(ShioriTypography.pageIndicator())
+                        .foregroundColor(ShioriColors.warmGray.opacity(0.6))
+                }
+            }
+            .padding(.bottom, 32)
+            .background(
+                LinearGradient(
+                    colors: [ShioriColors.kinari.opacity(0), ShioriColors.kinari],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
         }
         .transition(.opacity)
+    }
+
+    /// 現在のテーマに対応するインジケータカラー
+    private var themeIndicatorColor: Color {
+        switch viewModel.currentTheme {
+        case .neutral:  return ShioriColors.warmGold
+        case .ocean:    return ShioriColors.dustyBlue
+        case .fire:     return ShioriColors.darkCrimson
+        case .darkness: return ShioriColors.mistGray
+        }
+    }
+
+    /// 現在のテーマラベル
+    private var themeLabel: String {
+        switch viewModel.currentTheme {
+        case .neutral:  return "穏やか"
+        case .ocean:    return "海・悲しみ"
+        case .fire:     return "炎・怒り"
+        case .darkness: return "闇・恐怖"
+        }
     }
 }

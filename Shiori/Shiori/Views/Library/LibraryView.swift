@@ -1,6 +1,7 @@
 // LibraryView.swift
 // ライブラリ画面 — 韓国カフェ風ミニマリズムの書籍一覧
 // UIパーツ（ボタン枠）を極力排除し、タップに有機的な反応を返す
+// 青空文庫カタログからのダウンロード機能を含む
 
 import SwiftUI
 
@@ -13,6 +14,8 @@ struct LibraryView: View {
 
     /// タップ時のスケールアニメーション用
     @State private var tappedBookId: UUID?
+    /// カタログ表示フラグ
+    @State private var isShowingCatalog = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -21,18 +24,25 @@ struct LibraryView: View {
                 libraryHeader
 
                 // 書籍一覧
-                LazyVStack(spacing: 20) {
-                    ForEach(viewModel.books) { book in
-                        BookCardView(
-                            book: book,
-                            isTapped: tappedBookId == book.id,
-                            onTap: {
-                                handleBookTap(book)
-                            }
-                        )
+                if viewModel.books.isEmpty {
+                    emptyState
+                } else {
+                    LazyVStack(spacing: 20) {
+                        ForEach(viewModel.books) { book in
+                            BookCardView(
+                                book: book,
+                                isTapped: tappedBookId == book.id,
+                                onTap: {
+                                    handleBookTap(book)
+                                }
+                            )
+                        }
                     }
+                    .padding(.horizontal, 24)
                 }
-                .padding(.horizontal, 24)
+
+                // 青空文庫カタログセクション
+                catalogSection
 
                 // 下部余白（タブバー分）
                 Spacer()
@@ -40,6 +50,9 @@ struct LibraryView: View {
             }
         }
         .background(ShioriColors.kinari)
+        .sheet(isPresented: $isShowingCatalog) {
+            AozoraCatalogSheet(viewModel: viewModel)
+        }
     }
 
     // MARK: - ヘッダー
@@ -61,16 +74,62 @@ struct LibraryView: View {
         .padding(.bottom, 32)
     }
 
+    // MARK: - 空状態
+
+    /// 書籍が0冊のときの空状態表示
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "book.closed")
+                .font(.system(size: 40, weight: .ultraLight))
+                .foregroundColor(ShioriColors.warmGray.opacity(0.4))
+
+            Text("まだ本がありません")
+                .font(ShioriTypography.authorName())
+                .foregroundColor(ShioriColors.warmGray)
+
+            Text("下の「青空文庫から追加」で\n作品をダウンロードしましょう")
+                .font(ShioriTypography.caption())
+                .foregroundColor(ShioriColors.warmGray.opacity(0.6))
+                .multilineTextAlignment(.center)
+        }
+        .padding(.vertical, 60)
+    }
+
+    // MARK: - 青空文庫カタログセクション
+
+    /// 青空文庫からダウンロードするためのセクション
+    private var catalogSection: some View {
+        VStack(spacing: 12) {
+            Spacer().frame(height: 32)
+
+            Button {
+                isShowingCatalog = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 16, weight: .light))
+                    Text("青空文庫から追加")
+                        .font(ShioriTypography.button())
+                }
+                .foregroundColor(ShioriColors.dustyBlue)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 24)
+                .background(
+                    Capsule()
+                        .stroke(ShioriColors.dustyBlue.opacity(0.3), lineWidth: 1)
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     // MARK: - タップハンドラ
 
     /// 書籍カードタップ時の処理（有機的な反応）
     private func handleBookTap(_ book: Book) {
-        // タップアニメーション
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
             tappedBookId = book.id
         }
-
-        // 少し遅延してからリーダーに遷移
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             tappedBookId = nil
             onBookSelected(book)
@@ -81,7 +140,6 @@ struct LibraryView: View {
 // MARK: - 書籍カード
 
 /// 個々の書籍を表示するカードコンポーネント
-/// ボタン枠を使わず、タップに光や揺れで反応する
 struct BookCardView: View {
     let book: Book
     let isTapped: Bool
@@ -104,7 +162,6 @@ struct BookCardView: View {
                         .font(ShioriTypography.authorName())
                         .foregroundColor(ShioriColors.warmGray)
 
-                    // 読書進捗
                     if book.totalPages > 0 {
                         progressIndicator
                     }
@@ -128,9 +185,7 @@ struct BookCardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - サムネイル
-
-    /// 抽象的な書籍サムネイル（著者ごとに色が変わる）
+    /// 抽象的な書籍サムネイル
     private var bookThumbnail: some View {
         RoundedRectangle(cornerRadius: 8)
             .fill(
@@ -144,7 +199,7 @@ struct BookCardView: View {
             .overlay(
                 Text(String(book.title.prefix(1)))
                     .font(.custom(ShioriTypography.boldFontName, size: 20))
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundColor(ShioriColors.kinari.opacity(0.9))
             )
     }
 
@@ -160,8 +215,6 @@ struct BookCardView: View {
         return colorSets[hash % colorSets.count]
     }
 
-    // MARK: - 進捗表示
-
     /// 読書進捗のミニインジケータ
     private var progressIndicator: some View {
         HStack(spacing: 6) {
@@ -173,6 +226,101 @@ struct BookCardView: View {
             Text("\(book.currentPage)/\(book.totalPages)")
                 .font(ShioriTypography.pageIndicator())
                 .foregroundColor(ShioriColors.warmGray.opacity(0.6))
+        }
+    }
+}
+
+// MARK: - 青空文庫カタログシート
+
+/// 青空文庫カタログのモーダルシート
+struct AozoraCatalogSheet: View {
+    @ObservedObject var viewModel: LibraryViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    /// ダウンロード中のエントリID
+    @State private var downloadingId: UUID?
+    /// エラーメッセージ
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(AozoraBunkoDownloader.catalog) { entry in
+                        catalogRow(entry: entry)
+                    }
+                }
+                .padding(24)
+            }
+            .background(ShioriColors.kinari)
+            .navigationTitle("青空文庫")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("閉じる") { dismiss() }
+                        .font(ShioriTypography.button())
+                        .foregroundColor(ShioriColors.dustyRose)
+                }
+            }
+        }
+    }
+
+    /// カタログ内の1作品行
+    private func catalogRow(entry: AozoraEntry) -> some View {
+        let isAlreadyDownloaded = viewModel.books.contains { $0.title == entry.title }
+        let isDownloading = downloadingId == entry.id
+
+        return HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.title)
+                    .font(ShioriTypography.button())
+                    .foregroundColor(ShioriColors.inkBlack)
+                Text(entry.author)
+                    .font(ShioriTypography.caption())
+                    .foregroundColor(ShioriColors.warmGray)
+            }
+
+            Spacer()
+
+            if isAlreadyDownloaded {
+                Text("追加済み")
+                    .font(ShioriTypography.caption())
+                    .foregroundColor(ShioriColors.dustyGreen)
+            } else if isDownloading {
+                ProgressView()
+                    .tint(ShioriColors.dustyRose)
+            } else {
+                Button {
+                    downloadBook(entry: entry)
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundColor(ShioriColors.dustyBlue)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// 書籍をダウンロードする
+    private func downloadBook(entry: AozoraEntry) {
+        downloadingId = entry.id
+        errorMessage = nil
+
+        Task {
+            do {
+                let downloader = AozoraBunkoDownloader()
+                let book = try await downloader.download(entry: entry)
+                await MainActor.run {
+                    viewModel.books.append(book)
+                    downloadingId = nil
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    downloadingId = nil
+                }
+            }
         }
     }
 }

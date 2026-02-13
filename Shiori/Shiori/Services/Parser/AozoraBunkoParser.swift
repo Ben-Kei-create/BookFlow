@@ -114,8 +114,14 @@ final class AozoraBunkoParser {
     // MARK: - 青空文庫フォーマットのクリーニング
 
     /// 青空文庫特有のフォーマットタグを除去する
+    /// HTMLファイルの場合はHTMLタグも除去する
     private func cleanAozoraFormat(_ text: String) -> String {
         var result = text
+
+        // HTMLタグの除去（青空文庫のHTML版に対応）
+        if result.contains("<html") || result.contains("<HTML") || result.contains("<body") {
+            result = stripHTMLTags(result)
+        }
 
         // ルビの除去: ｜漢字《かんじ》 → 漢字
         // パターン1: ルビ開始記号「｜」付き
@@ -159,6 +165,50 @@ final class AozoraBunkoParser {
         )
 
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // MARK: - HTML除去
+
+    /// HTMLタグを除去してプレーンテキストに変換する
+    private func stripHTMLTags(_ html: String) -> String {
+        var result = html
+
+        // <br> タグを改行に変換
+        result = result.replacingOccurrences(
+            of: "<br[^>]*>",
+            with: "\n",
+            options: .regularExpression
+        )
+
+        // <ruby>タグ内のルビテキストを除去（本文のみ残す）
+        // <ruby>漢字<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby> → 漢字
+        result = result.replacingOccurrences(
+            of: "<rp>[^<]*</rp>",
+            with: "",
+            options: .regularExpression
+        )
+        result = result.replacingOccurrences(
+            of: "<rt>[^<]*</rt>",
+            with: "",
+            options: .regularExpression
+        )
+
+        // 全てのHTMLタグを除去
+        result = result.replacingOccurrences(
+            of: "<[^>]+>",
+            with: "",
+            options: .regularExpression
+        )
+
+        // HTMLエンティティのデコード
+        result = result.replacingOccurrences(of: "&amp;", with: "&")
+        result = result.replacingOccurrences(of: "&lt;", with: "<")
+        result = result.replacingOccurrences(of: "&gt;", with: ">")
+        result = result.replacingOccurrences(of: "&quot;", with: "\"")
+        result = result.replacingOccurrences(of: "&nbsp;", with: " ")
+        result = result.replacingOccurrences(of: "&#x3000;", with: "　")
+
+        return result
     }
 
     // MARK: - ヘッダー・フッター除去

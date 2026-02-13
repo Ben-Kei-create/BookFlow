@@ -1,26 +1,43 @@
 // ContentView.swift
 // メインナビゲーション：ライブラリ / マイページ の2タブ構成
 // 読書中は没入モードに切り替わり、タブバーは非表示になる
+// 初回起動時はオンボーディングを表示する
 
 import SwiftUI
 
 struct ContentView: View {
     // MARK: - 状態
+    @EnvironmentObject private var readingLogViewModel: ReadingLogViewModel
     @State private var selectedTab: AppTab = .library
     @State private var isReading = false
     @State private var selectedBook: Book?
 
+    /// 初回起動判定（UserDefaults）
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
     var body: some View {
         ZStack {
-            // 背景色: 生成り色（#FFFFFは禁止）
+            // 背景色: 生成り色（#FFFFFF / #000000 禁止）
             ShioriColors.kinari
                 .ignoresSafeArea()
 
-            if let book = selectedBook, isReading {
+            if !hasCompletedOnboarding {
+                // 初回起動：オンボーディング
+                OnboardingView {
+                    withAnimation(.easeInOut(duration: 0.5)) {
+                        hasCompletedOnboarding = true
+                    }
+                }
+                .transition(.opacity)
+            } else if let book = selectedBook, isReading {
                 // 没入型リーダー（タブバー非表示）
                 ReaderView(
                     book: book,
-                    onDismiss: {
+                    onDismiss: { record in
+                        // 読書記録を保存
+                        if let record = record {
+                            readingLogViewModel.addRecord(record)
+                        }
                         withAnimation(.easeInOut(duration: 0.5)) {
                             isReading = false
                             selectedBook = nil
@@ -89,7 +106,7 @@ struct ContentView: View {
                 Image(systemName: icon)
                     .font(.system(size: 20))
                 Text(label)
-                    .font(.custom("HiraginoMincho-W3", size: 10))
+                    .font(ShioriTypography.tabLabel())
             }
             .foregroundColor(selectedTab == tab ? ShioriColors.inkBlack : ShioriColors.warmGray)
             .opacity(selectedTab == tab ? 1.0 : 0.4)
